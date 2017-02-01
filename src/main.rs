@@ -67,7 +67,15 @@ impl Session {
             let _data = match self.0.read::<Vec<u8>>() {
                 Ok(Some(msg)) => msg,
                 Err(e) => panic!("Error in read {:?}", e),
-                Ok(None) => return,
+                Ok(None) => {
+                    println!("False Read - If wouldblock then it should be printed above - \
+                              reregistering");
+                    unwrap!(poll.reregister(&self.0,
+                                            Token(SESSION_TOKEN),
+                                            Ready::readable() | Ready::error() | Ready::hup(),
+                                            PollOpt::edge()));
+                    return;
+                }
             };
             let _ = self.0.write(poll, Token(SESSION_TOKEN), Some(vec![2u8, 3, 4, 5, 6]));
         } else if kind.is_writable() {
