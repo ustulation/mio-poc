@@ -1,0 +1,11 @@
+[package]
+name = "mio-poc"
+version = "0.1.0"
+authors = ["ustulation <ustulation@gmail.com>"]
+
+[dependencies]
+mio = "~0.6.3"
+maidsafe_utilities = "*"
+unwrap = "*"
+rustc-serialize = "*"
+byteorder = "*"
