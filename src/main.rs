@@ -64,19 +64,12 @@ impl Session {
         if kind.is_error() || kind.is_hup() {
             return;
         } else if kind.is_readable() {
-            let _data = match self.0.read::<Vec<u8>>() {
+            let data = match self.0.read::<Vec<u8>>(poll, Token(SESSION_TOKEN)) {
                 Ok(Some(msg)) => msg,
                 Err(e) => panic!("Error in read {:?}", e),
-                Ok(None) => {
-                    println!("False Read - If wouldblock then it should be printed above - \
-                              reregistering");
-                    unwrap!(poll.reregister(&self.0,
-                                            Token(SESSION_TOKEN),
-                                            Ready::readable() | Ready::error() | Ready::hup(),
-                                            PollOpt::edge()));
-                    return;
-                }
+                Ok(None) => return,
             };
+            println!("Async socket Rxd from peer: {:?}", data);
             let _ = self.0.write(poll, Token(SESSION_TOKEN), Some(vec![2u8, 3, 4, 5, 6]));
         } else if kind.is_writable() {
             let _ = self.0.write(poll, Token(SESSION_TOKEN), Option::None::<Vec<u8>>);
@@ -120,11 +113,10 @@ fn spawn_el() -> El {
                 match event.token() {
                     Token(t) if t == LISTENER_TOKEN => {
                         loop {
-                            let (peer, peer_addr) = match server.listener.accept() {
+                            let (peer, _) = match server.listener.accept() {
                                 Ok((peer, peer_addr)) => (Socket::wrap(peer), peer_addr),
                                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock ||
                                               e.kind() == io::ErrorKind::Interrupted => {
-                                    println!("Ignoring error in listening: {:?}", e);
                                     break;
                                 }
                                 Err(e) => panic!("Error in listening: {:?}", e),
@@ -136,8 +128,8 @@ fn spawn_el() -> El {
                                                   Ready::hup(),
                                                   PollOpt::edge()));
                             server.session = Some(Session(peer));
-
-                            println!("Accepted from peer: {:?}", peer_addr);
+                            // Uncomment to simulate a WouldBlock
+                            // unwrap!(server.session.as_mut()).ready(&poll, event.kind());
                         }
                     }
                     Token(t) if t == SESSION_TOKEN => {
@@ -167,10 +159,11 @@ fn spawn_el() -> El {
 }
 
 fn sync_write(stream: &mut TcpStream, message: Vec<u8>) {
-    let mut size_vec = Vec::with_capacity(mem::size_of::<u32>());
+    let mut size_vec = Vec::<u8>::with_capacity(mem::size_of::<u32>());
     unwrap!(size_vec.write_u32::<LittleEndian>(message.len() as u32));
 
     unwrap!(stream.write_all(&size_vec));
+    thread::sleep(Duration::from_secs(1));
     unwrap!(stream.write_all(&message));
 }
 
@@ -195,11 +188,11 @@ fn main() {
     let el = spawn_el();
     unwrap!(el.listener_started_rx.recv());
     let mut us = unwrap!(TcpStream::connect("127.0.0.1:5000"));
-    sync_write(&mut us, unwrap!(serialise(&vec![1, 2, 3, 4, 60, 97])));
-    let blocking_rx = sync_read::<Vec<u8>>(&mut us);
-    println!("Blocking Rxd from peer: {:?}", blocking_rx);
+    thread::sleep(Duration::from_secs(1));
+    sync_write(&mut us, unwrap!(serialise(&vec![1u8, 2, 3, 4, 60, 97])));
+    let _blocking_rx = sync_read::<Vec<u8>>(&mut us);
     sync_write(&mut us,
-               unwrap!(serialise(&vec![11, 21, 33, 41, 160, 99, 233])));
-    println!("Written - If windows has gone into wouldblock then this will panic...");
-    thread::sleep(Duration::from_secs(10));
+               unwrap!(serialise(&vec![11u8, 21, 33, 41, 160, 99, 233])));
+    println!("Written - If windows has gone into wouldblock then this will hang...");
+    let _blocking_rx = sync_read::<Vec<u8>>(&mut us);
 }

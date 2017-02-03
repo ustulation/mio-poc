@@ -42,9 +42,9 @@ impl Socket {
     //   - Ok(None):       there is not enough data in the socket. Call `read`
     //                     again in the next invocation of the `ready` handler.
     //   - Err(error):     there was an error reading from the socket.
-    pub fn read<T: Decodable>(&mut self) -> io::Result<Option<T>> {
+    pub fn read<T: Decodable>(&mut self, poll: &Poll, token: Token) -> io::Result<Option<T>> {
         let inner = unwrap!(self.inner.as_mut());
-        inner.read()
+        inner.read(poll, token)
     }
 
     // Write a message to the socket.
@@ -113,7 +113,7 @@ impl SockInner {
     //   - Ok(None):       there is not enough data in the socket. Call `read`
     //                     again in the next invocation of the `ready` handler.
     //   - Err(error):     there was an error reading from the socket.
-    fn read<T: Decodable>(&mut self) -> io::Result<Option<T>> {
+    fn read<T: Decodable>(&mut self, _poll: &Poll, _token: Token) -> io::Result<Option<T>> {
         if let Some(message) = self.read_from_buffer()? {
             return Ok(Some(message));
         }
@@ -123,6 +123,7 @@ impl SockInner {
 
         match self.stream.read(&mut buffer) {
             Ok(bytes_read) => {
+                // println!("Total bytes rxd: {}", bytes_read);
                 self.read_buffer.extend_from_slice(&buffer[0..bytes_read]);
                 self.read_from_buffer()
             }
@@ -130,6 +131,16 @@ impl SockInner {
             Err(error) => {
                 if error.kind() == ErrorKind::WouldBlock || error.kind() == ErrorKind::Interrupted {
                     println!("================== Error in read {:?}", error.kind());
+                    // This re-registration is not required for Linux - it automatically re-fires
+                    // read readiness when socket is no longer wouldblock. On windows you get this
+                    // WouldBlock wayyy more often and once you get it sometimes re-fires when
+                    // actually ready and sometimes doesn't. On putting this it fires most of the
+                    // time but there are times it does not fire readiness any more so it's not a
+                    // solution but sort of reduces the problem to some extent.
+                    // unwrap!(poll.reregister(self,
+                    //                         token,
+                    //                         Ready::readable() | Ready::error() | Ready::hup(),
+                    //                         PollOpt::edge()));
                     Ok(None)
                 } else {
                     Err(error)
@@ -143,6 +154,7 @@ impl SockInner {
 
         if self.read_len == 0 {
             if self.read_buffer.len() < u32_size {
+                println!("Payload size not obtained yet");
                 return Ok(None);
             }
 
@@ -152,6 +164,7 @@ impl SockInner {
         }
 
         if self.read_len > self.read_buffer.len() {
+            println!("Buffer not yet as big as indicated by Payload size");
             return Ok(None);
         }
 
